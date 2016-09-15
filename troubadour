@@ -1,0 +1,46 @@
+#!/bin/sh
+words=$(grep -o -w "\w\{$1,$2\}" /usr/share/dict/words | shuf -n$3)
+wordCount=$(grep -o -w "\w\{$1,$2\}" /usr/share/dict/words | wc -l)
+
+printables=$(jot 100 33 126 1  | awk '{printf "%c", $1}' )
+printablesCount=$(echo "$printables" | wc -c)
+specials=$(echo "$printables" | tr -d '[a-zA-Z]' )
+
+password=$words
+
+for i in $(jot $4); do
+  stop=0
+  while [ $stop -eq 0 ]; do
+    w=$(echo "$specials" | fold -w1 | shuf -n1)
+    length=$(echo $password | wc -c | tr -d ' ')
+    head=$(jot -r 1 1 $length)
+    tail=$(echo "$length - 1 - $head" | bc)
+    if [ $tail -lt 0 ]; then
+      tail=0
+    fi
+
+    top=$(echo $password | fold -w1 | head -n $head | tr -d '\n')
+    bottom=$(echo $password | fold -w1 | tail -n $tail | tr -d '\n')
+    password=$top$w$bottom
+
+    echo $password | grep -q -E -e '[^a-zA-Z] ' -e ' [^a-zA-Z]' -e '^[^a-zA-Z]' -e '[^a-zA-Z]$'
+    stop=$?
+    if [ $stop -eq 0 ]; then
+      password=$top$bottom
+    else
+      wildchars=$wildchars$w
+    fi
+  done
+done
+
+password=$(echo $password | tr -d ' ')
+
+entropyBrute=$(echo "scale=1; l($printablesCount ^ $length) / l(2)" | bc -l)
+entropyDict=$(echo "scale=1; l($wordCount ^ $3) / l(2)" | bc -l)
+
+echo "Words:       $(echo "$words" | tr '\n' ' ')"
+echo "Wildchar(s): $wildchars"
+echo "Password:    $password"
+echo "Length:      $length"
+echo "Entropy:     $entropyBrute ($entropyDict)"
+echo
