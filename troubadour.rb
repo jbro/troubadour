@@ -88,5 +88,8 @@ puts "Length:      #{password.length}"
 wordCount = lines.length
 wordCharCount = lines.map { |l| l.chomp.chars.to_a.uniq }.join('').chars.to_a.uniq.length + WILDCHARS.length
 
+bruteForceEntropy = Math.log2(wordCharCount ** password.length).round(2)
+entropy = (Math.log2(wordCount ** criteria[:wordCount]) +
+  (wildChars.length * Math.log2(WILDCHARS.length * (password.length - words.length)))).round(2)
 
-puts "Entropy:     #{Math.log2(wordCharCount ** password.length).round(2)} (#{Math.log2(wordCount ** criteria[:wordCount]).round(2)})"
+puts "Entropy:     #{bruteForceEntropy} (#{entropy})"
