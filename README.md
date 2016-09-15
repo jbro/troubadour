@@ -1,5 +1,15 @@
 # troubadour
-A small script for generating easy to remember word base passwords, which are still secure
+A small script for generating easy to remember wordbased passwords, which are still secure.
+
+    ./troubadour.rb -h
+    Usage: ./troubadour.rb [options]
+        -m, --min_length=n               Minimum length of word to select
+        -M, --max_length=n               Maximum length of a word to select
+        -n, --words=n                    Number of words to select
+        -w, --wild_chars=n               Number of wild chars to randomly insert
+        -l, --word_list=FILE             Word list to select words from
+        -E, --exclude=REGEXP             Regular expression for excluding words
+        -h, --help                       Prints this help
 
 # Examples
 
