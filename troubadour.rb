@@ -3,6 +3,7 @@
 
 require 'optparse'
 require 'securerandom'
+require 'timeout'
 
 DIGITS = ('0'..'9').to_a.freeze
 SPECIAL_CHARS = (33..126).map(&:chr).reject { |char| char.match?(/[a-zA-Z0-9]/) }.freeze
@@ -14,6 +15,57 @@ def log2_combination(total, selected)
     Math.lgamma(total - selected + 1).first) / Math.log(2)
 end
 
+# Count every word-boundary and insertion interpretation that produces the password.
+def count_generation_paths(password, word_lookup, config)
+  characters = password.chars
+  match_cache = {}
+
+  matches_from = lambda do |offset, remaining_digits, remaining_specials|
+    cache_key = [offset, remaining_digits, remaining_specials]
+    next match_cache[cache_key] if match_cache.key?(cache_key)
+
+    matches = []
+    walk = nil
+    walk = lambda do |position, word, digits, specials, after_insertion|
+      if !after_insertion && word.length >= config[:min_word_length] && word_lookup.key?(word)
+        matches << [position, digits, specials]
+      end
+
+      next if position >= characters.length || word.length >= config[:max_word_length]
+
+      char = characters[position]
+      walk.call(position + 1, word + char, digits, specials, false)
+
+      can_insert = !after_insertion && !word.empty? && position + 1 < characters.length
+      if can_insert && digits < remaining_digits && DIGITS.include?(char)
+        walk.call(position + 1, word, digits + 1, specials, true)
+      end
+      if can_insert && specials < remaining_specials && SPECIAL_CHARS.include?(char)
+        walk.call(position + 1, word, digits, specials + 1, true)
+      end
+    end
+
+    walk.call(offset, '', 0, 0, false)
+    match_cache[cache_key] = matches
+  end
+
+  states = { [0, 0, 0] => 1 }
+  config[:word_count].times do
+    next_states = Hash.new(0)
+    states.each do |(offset, digits, specials), path_count|
+      remaining_digits = config[:digit_count] - digits
+      remaining_specials = config[:special_count] - specials
+      matches_from.call(offset, remaining_digits, remaining_specials).each do |position, added_digits, added_specials|
+        key = [position, digits + added_digits, specials + added_specials]
+        next_states[key] += path_count
+      end
+    end
+    states = next_states
+  end
+
+  states.fetch([characters.length, config[:digit_count], config[:special_count]], 0)
+end
+
 config = {
   min_word_length: 3,
   max_word_length: 8,
@@ -21,6 +73,7 @@ config = {
   password_count: 1,
   digit_count: 0,
   special_count: 1,
+  calculation_timeout: 5.0,
   word_list: '/usr/share/dict/words',
   exclude_regex: /^$/
 }
@@ -58,6 +111,11 @@ parser = OptionParser.new do |opts|
     config[:special_count] = value
   end
 
+  opts.on('-t', '--timeout=SECONDS', Float, 'Collision calculation timeout per password') do |value|
+    raise OptionParser::InvalidArgument, 'SECONDS must be greater than 0' unless value.positive?
+    config[:calculation_timeout] = value
+  end
+
   opts.on('-l', '--word_list=FILE', 'Word list to select words from') do |path|
     path = File.expand_path(path)
     raise OptionParser::InvalidArgument, 'file does not exist' unless File.file?(path)
@@ -93,6 +151,12 @@ if lines.empty?
   warn 'No words match the requested criteria'
   exit 1
 end
+
+character_alphabet = {}
+lines.each { |line| line.each_char { |char| character_alphabet[char] = true } }
+DIGITS.each { |char| character_alphabet[char] = true } if config[:digit_count].positive?
+SPECIAL_CHARS.each { |char| character_alphabet[char] = true } if config[:special_count].positive?
+word_lookup = lines.each_with_object({}) { |word, lookup| lookup[word] = true }
 
 passwords = Array.new(config[:password_count]) do
   words = Array.new(config[:word_count]) do
@@ -134,22 +198,52 @@ passwords = Array.new(config[:password_count]) do
   entropy += log2_combination(position_count - config[:digit_count], config[:special_count])
   entropy += config[:digit_count] * Math.log2(DIGITS.length)
   entropy += config[:special_count] * Math.log2(SPECIAL_CHARS.length)
+  password = decorated_words.join
+
+  path_count = begin
+    Timeout.timeout(config[:calculation_timeout]) do
+      count_generation_paths(password, word_lookup, config)
+    end
+  rescue Timeout::Error
+    nil
+  end
+
+  if path_count&.zero?
+    warn 'Unable to find the generation path for a generated password'
+    exit 1
+  end
 
   {
     words: words,
     digits: digits,
     specials: specials,
-    password: decorated_words.join,
-    entropy: entropy
+    password: password,
+    entropy: entropy,
+    naive_space: password.length * Math.log2(character_alphabet.length),
+    path_count: path_count,
+    surprisal: path_count && entropy - Math.log2(path_count)
   }
 end
 
 passwords.each_with_index do |result, index|
   puts if index.positive?
-  puts "Words:       #{result[:words].join(' ')}"
+  words = result[:words].join(' ')
+  words = "\e[1m#{words}\e[0m" if $stdout.tty?
+  puts "Words:       #{words}"
   puts "Digit(s):    #{result[:digits].join}"
   puts "Special(s):  #{result[:specials].join}"
   puts "Password:    #{result[:password]}"
   puts "Length:      #{result[:password].length}"
-  puts "Entropy:     #{result[:entropy].round(2)} bits (estimated)"
+  puts "Naive space: #{result[:naive_space].round(2)} bits (character-by-character search)"
+  if result[:path_count]
+    path_label = result[:path_count] == 1 ? 'path' : 'paths'
+    puts "Entropy:     collision-adjusted #{result[:surprisal].round(2)} bits | " \
+         "generation #{result[:entropy].round(2)} bits | " \
+         "#{result[:path_count]} valid #{path_label}"
+  else
+    timeout = format('%g', config[:calculation_timeout])
+    puts "Entropy:     collision-adjusted unavailable | " \
+         "generation #{result[:entropy].round(2)} bits | " \
+         "path count timed out after #{timeout} seconds"
+  end
 end
