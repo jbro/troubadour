@@ -22,6 +22,7 @@ import (
 )
 
 type options struct {
+	configFile    string
 	wordList      string
 	passwordCount int
 	passwordsOnly bool
@@ -30,8 +31,9 @@ type options struct {
 }
 
 const (
-	maxConfigSize    = 64 * 1024
-	maxPasswordCount = 1_000
+	defaultConfigPath = ".troubadour.toml"
+	maxConfigSize     = 64 * 1024
+	maxPasswordCount  = 1_000
 
 	ansiReset      = "\x1b[0m"
 	ansiBold       = "\x1b[1m"
@@ -65,32 +67,27 @@ func realMain() int {
 	defer signal.Stop(signals)
 	go watchSignal(ctx, cancel, signals, received, func() { signal.Stop(signals) })
 
-	configPath, err := defaultConfigPath()
-	if err != nil {
-		writeDiagnostic(err)
-		return 2
-	}
-	parsed, err := parseFlags(os.Args[1:], os.Stderr, configPath)
-	if errors.Is(err, flag.ErrHelp) {
-		return 0
-	}
-	if err != nil {
-		writeDiagnostic(err)
-		return 2
-	}
-	if err := run(ctx, parsed, os.Stdout); err != nil {
-		writeDiagnostic(err)
-		select {
-		case receivedSignal := <-received:
-			return 128 + int(receivedSignal)
-		default:
-		}
-		return 1
-	}
+	exitCode := execute(ctx, os.Args[1:], os.Stdout, os.Stderr, defaultConfigPath)
 	select {
 	case receivedSignal := <-received:
 		return 128 + int(receivedSignal)
 	default:
+	}
+	return exitCode
+}
+
+func execute(ctx context.Context, args []string, stdout, stderr io.Writer, configPath string) int {
+	parsed, err := parseFlags(args, stderr, configPath)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	if err != nil {
+		writeDiagnostic(stderr, err)
+		return 2
+	}
+	if err := run(ctx, parsed, stdout); err != nil {
+		writeDiagnostic(stderr, err)
+		return 1
 	}
 	return 0
 }
@@ -107,8 +104,8 @@ func watchSignal(ctx context.Context, cancel context.CancelFunc, signals <-chan 
 	}
 }
 
-func writeDiagnostic(err error) {
-	if _, writeErr := fmt.Fprintln(os.Stderr, err); writeErr != nil {
+func writeDiagnostic(output io.Writer, err error) {
+	if _, writeErr := fmt.Fprintln(output, err); writeErr != nil {
 		return
 	}
 }
@@ -137,18 +134,10 @@ Options:
   --minimum-surprisal BITS         reject generated passwords below this estimate (default %.0f)
   --calculation-timeout DURATION   collision-path calculation limit per password (default %s)
   --exclude-regexp REGEXP          Go regexp matching candidates to omit (default %q)
-  --passwords-only                 print only generated passwords
+  --passwords-only                 print only passwords; requires explicit --config
   --help                           show this help text
 `, configPath, defaults.words.MinWordLength, defaults.words.MaxWordLength, defaults.generator.WordCount, defaults.passwordCount, defaults.generator.DigitCount, defaults.generator.SpecialCount, defaults.generator.MinimumSurprisal, defaults.generator.CalculationTimeout, defaults.words.Exclude)
 	return err
-}
-
-func defaultConfigPath() (string, error) {
-	directory, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("find user configuration directory: %w", err)
-	}
-	return filepath.Join(directory, "troubadour", "config.toml"), nil
 }
 
 func defaultOptions() options {
@@ -302,6 +291,7 @@ func parseFlags(args []string, output io.Writer, fallbackConfigPath string) (opt
 	if configPath != "" {
 		configured, err := loadConfig(configPath, builtins)
 		if err == nil {
+			configured.configFile = configPath
 			parsed = configured
 		} else if explicitConfig || !errors.Is(err, os.ErrNotExist) {
 			return options{}, err
@@ -333,6 +323,9 @@ func parseFlags(args []string, output io.Writer, fallbackConfigPath string) (opt
 			return options{}, fmt.Errorf("write usage: %w", err)
 		}
 		return options{}, flag.ErrHelp
+	}
+	if parsed.passwordsOnly && (!explicitConfig || parsed.configFile == "") {
+		return options{}, errors.New("--passwords-only requires an explicitly loaded --config PATH")
 	}
 	if flags.NArg() != 0 {
 		return options{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(flags.Args(), " "))
@@ -384,6 +377,18 @@ func run(ctx context.Context, options options, output io.Writer) (returnErr erro
 		return fmt.Errorf("prepare generator: %w", err)
 	}
 	color := supportsColor(output) && !options.passwordsOnly
+	if !options.passwordsOnly {
+		if err := printConfiguration(output, options, len(words), color); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(output); err != nil {
+			return fmt.Errorf("write output: %w", err)
+		}
+	}
+	return generatePasswords(ctx, generator, options, output, color)
+}
+
+func generatePasswords(ctx context.Context, generator *troubadour.Generator, options options, output io.Writer, color bool) error {
 	for i := range options.passwordCount {
 		result, err := generator.Generate(ctx)
 		if err != nil {
@@ -400,6 +405,34 @@ func run(ctx context.Context, options options, output io.Writer) (returnErr erro
 			}
 		} else if err := printResult(output, result, color); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func printConfiguration(output io.Writer, options options, candidateCount int, color bool) error {
+	configFile := options.configFile
+	if configFile == "" {
+		configFile = "built-in defaults with command-line overrides"
+	}
+	details := []struct {
+		label, value string
+	}{
+		{"Configuration file:", configFile},
+		{"Word list:", options.wordList},
+		{"Filtered candidates:", strconv.Itoa(candidateCount)},
+		{"Word length:", fmt.Sprintf("%d-%d Unicode code points", options.words.MinWordLength, options.words.MaxWordLength)},
+		{"Words per password:", strconv.Itoa(options.generator.WordCount)},
+		{"Digits per password:", strconv.Itoa(options.generator.DigitCount)},
+		{"Specials per password:", strconv.Itoa(options.generator.SpecialCount)},
+		{"Minimum surprisal:", fmt.Sprintf("%.2f bits", options.generator.MinimumSurprisal)},
+		{"Calculation timeout:", options.generator.CalculationTimeout.String()},
+		{"Exclude regexp:", options.words.Exclude},
+		{"Passwords requested:", strconv.Itoa(options.passwordCount)},
+	}
+	for _, detail := range details {
+		if err := writeDetail(output, detail.label, detail.value, "", color); err != nil {
+			return fmt.Errorf("write configuration: %w", err)
 		}
 	}
 	return nil

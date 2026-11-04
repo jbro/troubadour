@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -54,20 +55,91 @@ func TestEquivalentHelpFormsUseIdenticalDefaults(t *testing.T) {
 	}
 }
 
-func TestDefaultConfigPathUsesUserConfigDirectory(t *testing.T) {
+func TestDefaultConfigPathUsesCurrentDirectory(t *testing.T) {
 	t.Parallel()
 
-	path, err := defaultConfigPath()
-	if err != nil {
+	if defaultConfigPath != ".troubadour.toml" || filepath.IsAbs(defaultConfigPath) {
+		t.Fatalf("default config path = %q, want current-directory .troubadour.toml", defaultConfigPath)
+	}
+}
+
+func TestExecuteLoadsCurrentDirectoryDefaultConfigEndToEnd(t *testing.T) {
+	directory := t.TempDir()
+	t.Chdir(directory)
+	wordList := filepath.Join(directory, "words.txt")
+	if err := os.WriteFile(wordList, []byte("cat\ndog\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	directory, err := os.UserConfigDir()
-	if err != nil {
+	config := "word-list = \"words.txt\"" + `
+word-count = 1
+special-count = 0
+minimum-surprisal = 0
+`
+	if err := os.WriteFile(defaultConfigPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(directory, "troubadour", "config.toml")
-	if path != want || !filepath.IsAbs(path) {
-		t.Fatalf("config path = %q, want absolute path %q", path, want)
+
+	var stdout, stderr bytes.Buffer
+	if exitCode := execute(t.Context(), nil, &stdout, &stderr, defaultConfigPath); exitCode != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", exitCode, stderr.String())
+	}
+	for _, text := range []string{"Configuration file:     .troubadour.toml", "Word list:              words.txt", "Filtered candidates:    2", "Words per password:     1", "Minimum surprisal:      0.00 bits", "Password:"} {
+		if !strings.Contains(stdout.String(), text) {
+			t.Errorf("output does not contain %q:\n%s", text, stdout.String())
+		}
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestExecuteLoadsExplicitConfigEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	wordList := filepath.Join(directory, "words.txt")
+	if err := os.WriteFile(wordList, []byte("horse\nstaple\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(directory, "explicit.toml")
+	config := "word-list = " + strconv.Quote(wordList) + `
+word-count = 1
+special-count = 0
+minimum-surprisal = 0
+passwords-only = true
+`
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	missingDefault := filepath.Join(directory, "missing-default.toml")
+	var stdout, stderr bytes.Buffer
+	args := []string{"--config", configPath}
+	if exitCode := execute(t.Context(), args, &stdout, &stderr, missingDefault); exitCode != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", exitCode, stderr.String())
+	}
+	password := strings.TrimSpace(stdout.String())
+	if password != "horse" && password != "staple" {
+		t.Fatalf("password = %q, want an explicitly configured word", password)
+	}
+}
+
+func TestExecuteReportsConfigFailure(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "invalid.toml")
+	if err := os.WriteFile(configPath, []byte("unknown = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if exitCode := execute(t.Context(), nil, &stdout, &stderr, configPath); exitCode != 2 {
+		t.Fatalf("exit code = %d, want 2", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "unknown keys: unknown") {
+		t.Fatalf("stderr = %q, want unknown-key diagnostic", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
 }
 
@@ -143,6 +215,45 @@ func TestParseFlagsRequiresWordList(t *testing.T) {
 	}
 }
 
+func TestConfigInheritsSecurityDefaultsWhenFieldsAreOmitted(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "legacy.toml")
+	if err := os.WriteFile(configPath, []byte("word-list = \"words.txt\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parseFlags(nil, &bytes.Buffer{}, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := troubadour.DefaultConfig()
+	if parsed.generator != defaults {
+		t.Fatalf("generator config = %+v, want inherited defaults %+v", parsed.generator, defaults)
+	}
+}
+
+func TestPasswordsOnlyRequiresExplicitConfig(t *testing.T) {
+	t.Parallel()
+
+	configPath := filepath.Join(t.TempDir(), "passwords-only.toml")
+	config := `word-list = "words.txt"
+passwords-only = true
+`
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseFlags(nil, &bytes.Buffer{}, configPath); err == nil || !strings.Contains(err.Error(), "requires an explicitly loaded --config PATH") {
+		t.Fatalf("implicit config error = %v", err)
+	}
+	parsed, err := parseFlags([]string{"--config", configPath}, &bytes.Buffer{}, filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.passwordsOnly || parsed.configFile != configPath {
+		t.Fatalf("explicit config was not retained: %+v", parsed)
+	}
+}
+
 func TestRunPrintsDiagnosticsByDefault(t *testing.T) {
 	t.Parallel()
 
@@ -163,7 +274,7 @@ func TestRunPrintsDiagnosticsByDefault(t *testing.T) {
 	if err := run(t.Context(), parsed, &output); err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"Words:", "Password:", "Unicode code points", "Generation surprisal:", "Unadjusted choices:"} {
+	for _, text := range []string{"Configuration file:", "built-in defaults with command-line overrides", "Word list:", "Filtered candidates:", "Words per password:", "Minimum surprisal:", "Passwords requested:", "Words:", "Password:", "Unicode code points", "Generation surprisal:", "Unadjusted choices:"} {
 		if !strings.Contains(output.String(), text) {
 			t.Errorf("output does not contain %q:\n%s", text, output.String())
 		}
@@ -315,7 +426,7 @@ special-count = 3
 minimum-surprisal = 72
 calculation-timeout = "750ms"
 exclude-regexp = "^skip$"
-passwords-only = true
+passwords-only = false
 `
 	if err := os.WriteFile(configPath, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -325,9 +436,10 @@ passwords-only = true
 		t.Fatal(err)
 	}
 	want := options{
+		configFile:    configPath,
 		wordList:      "configured.txt",
 		passwordCount: 2,
-		passwordsOnly: true,
+		passwordsOnly: false,
 		words: troubadour.WordListConfig{
 			MinWordLength: 4,
 			MaxWordLength: 10,

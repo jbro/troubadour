@@ -28,7 +28,7 @@ manipulate or create ambiguous terminal output.
 --minimum-surprisal BITS         reject weaker generated passwords (default 64)
 --calculation-timeout DURATION   path-counting limit per password (default 5s)
 --exclude-regexp REGEXP          Go regexp matching candidates to omit (default ^$)
---passwords-only                 print only generated passwords
+--passwords-only                 print only passwords; requires explicit --config
 ```
 
 Durations use Go syntax such as `750ms`, `5s`, or `1m`. Set
@@ -39,13 +39,17 @@ may separate a base character from a combining mark. Run
 
 ## Configuration file
 
-An optional `troubadour/config.toml` under the platform user configuration
-directory returned by Go's `os.UserConfigDir` can set the default for every
-generation and output flag. Current-directory configuration is never loaded
-implicitly. Use `--config PATH` to load another file; command-line flags always
-override file values. A missing default file is ignored, while a missing
-explicitly requested file is an error. Unknown keys and invalid values are
-rejected.
+An optional `.troubadour.toml` in the current directory can set the default for
+every generation and output flag. Use `--config PATH` to load another file;
+command-line flags always override file values. A missing default file is
+ignored, while a missing explicitly requested file is an error. Unknown keys
+and invalid values are rejected.
+
+Configuration fields omitted by older files inherit current defaults.
+In particular, the minimum surprisal is 64 bits and the default word count is
+six. An older file that explicitly retains a lower word count may need to be
+updated to meet the strength floor; setting `minimum-surprisal = 0` is the
+explicit unsafe opt-out.
 
 ```toml
 word-list = "~/.local/share/troubadour/words.txt"
@@ -75,8 +79,14 @@ because it selected shorter words.
 
 By default, output includes the selected source words, final password, password
 length, generation surprisal, and unadjusted choice count. Pass
-`--passwords-only` when piping output to another program to print one generated
-password per line:
+`--passwords-only` with an explicit configuration file when piping output to
+another program to print one generated password per line. Requiring
+`--config PATH` ensures suppressed configuration details were deliberately
+selected:
+
+```sh
+troubadour --config .troubadour.toml --passwords-only
+```
 
 ```text
 cor!recthor7sebatterystaple
