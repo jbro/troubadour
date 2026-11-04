@@ -164,6 +164,9 @@ func TestGeneratorReportsExactEntropyForTinySpace(t *testing.T) {
 	if math.Abs(result.Surprisal-want) > 1e-12 {
 		t.Fatalf("surprisal = %v, want %v", result.Surprisal, want)
 	}
+	if rawWant := 4 * math.Log2(13); math.Abs(result.RawEntropy-rawWant) > 1e-12 {
+		t.Fatalf("raw entropy = %v, want %v", result.RawEntropy, rawWant)
+	}
 }
 
 func TestGeneratorRejectsWeakResultByDefault(t *testing.T) {

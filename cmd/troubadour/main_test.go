@@ -26,7 +26,7 @@ func TestHelpDocumentsCanonicalFlagsAndSemantics(t *testing.T) {
 		t.Fatalf("error = %v, want flag.ErrHelp", err)
 	}
 	help := output.String()
-	for _, text := range []string{"--config PATH", ".troubadour.toml", "--word-list PATH", "--word-count", "--min-word-length", "--minimum-surprisal", "--calculation-timeout", "--passwords-only", "attacker knows", "Unicode code points", "NFC-normalized UTF-8"} {
+	for _, text := range []string{"--config PATH", ".troubadour.toml", "--word-list PATH", "--word-count", "--min-word-length", "--minimum-surprisal", "--calculation-timeout", "--passwords-only", "known parameters", "Unicode code points", "NFC-normalized UTF-8"} {
 		if !strings.Contains(help, text) {
 			t.Errorf("help does not contain %q:\n%s", text, help)
 		}
@@ -274,7 +274,7 @@ func TestRunPrintsDiagnosticsByDefault(t *testing.T) {
 	if err := run(t.Context(), parsed, &output); err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"Configuration file:", "built-in defaults with command-line overrides", "Word list:", "Filtered candidates:", "Words per password:", "Minimum surprisal:", "Passwords requested:", "Words:", "Password:", "Unicode code points", "Generation surprisal:", "Unadjusted choices:"} {
+	for _, text := range []string{"Configuration file:", "built-in defaults with command-line overrides", "Word list:", "Filtered candidates:", "Words per password:", "Minimum surprisal:", "Passwords requested:", "Words:", "Password:", "Unicode code points", "Raw entropy:", "Entropy:", "collision-adjusted", "unadjusted choices"} {
 		if !strings.Contains(output.String(), text) {
 			t.Errorf("output does not contain %q:\n%s", text, output.String())
 		}
@@ -362,11 +362,12 @@ func TestPrintResultDetailedOutput(t *testing.T) {
 	pathCount := new(big.Int).Lsh(big.NewInt(1), 80)
 	var exactOutput bytes.Buffer
 	result := troubadour.Result{ //nolint:gosec // Fixed non-secret fixture locks the detailed output format.
-		Words:     []string{"correct", "horse", "battery"},
-		Password:  "cor!recthorsebat2tery",
-		Entropy:   71.25,
-		PathCount: pathCount,
-		Surprisal: 70.5,
+		Words:      []string{"correct", "horse", "battery"},
+		Password:   "cor!recthorsebat2tery",
+		RawEntropy: 88.75,
+		Entropy:    71.25,
+		PathCount:  pathCount,
+		Surprisal:  70.5,
 	}
 	if err := printResult(&exactOutput, result, false); err != nil {
 		t.Fatal(err)
@@ -374,8 +375,8 @@ func TestPrintResultDetailedOutput(t *testing.T) {
 	want := "Words:                  correct horse battery\n" +
 		"Password:               cor!recthorsebat2tery\n" +
 		"Length:                 21 Unicode code points\n" +
-		"Generation surprisal:   70.50 bits (" + pathCount.String() + " valid paths)\n" +
-		"Unadjusted choices:     71.25 bits\n"
+		"Raw entropy:            88.75 bits (character-by-character search space)\n" +
+		"Entropy:                collision-adjusted 70.50 bits (" + pathCount.String() + " valid paths) | unadjusted choices 71.25 bits\n"
 	if exactOutput.String() != want {
 		t.Fatalf("detailed output:\n%s\nwant:\n%s", exactOutput.String(), want)
 	}
@@ -388,14 +389,14 @@ func TestPrintResultDetailedOutput(t *testing.T) {
 	if !strings.Contains(colorOutput.String(), highlighted) {
 		t.Fatalf("colored output does not contain %q:\n%s", highlighted, colorOutput.String())
 	}
-	for _, metric := range []string{"21", "70.50", pathCount.String(), "71.25"} {
+	for _, metric := range []string{"21", "88.75", "70.50", pathCount.String(), "71.25"} {
 		boldMetric := ansiBold + metric + ansiReset
 		if !strings.Contains(colorOutput.String(), boldMetric) {
 			t.Fatalf("colored output does not contain %q:\n%s", boldMetric, colorOutput.String())
 		}
 	}
-	if count := strings.Count(colorOutput.String(), "\x1b["); count != 10 {
-		t.Fatalf("colored output contains %d ANSI sequences, want 10:\n%s", count, colorOutput.String())
+	if count := strings.Count(colorOutput.String(), "\x1b["); count != 12 {
+		t.Fatalf("colored output contains %d ANSI sequences, want 12:\n%s", count, colorOutput.String())
 	}
 }
 

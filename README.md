@@ -78,7 +78,8 @@ because it selected shorter words.
 ## Security estimates
 
 By default, output includes the selected source words, final password, password
-length, generation surprisal, and unadjusted choice count. Pass
+length, raw entropy, generation entropy, and collision-adjusted generation
+surprisal. Pass
 `--passwords-only` with an explicit configuration file when piping output to
 another program to print one generated password per line. Requiring
 `--config PATH` ensures suppressed configuration details were deliberately
@@ -92,10 +93,16 @@ troubadour --config .troubadour.toml --passwords-only
 cor!recthor7sebatterystaple
 ```
 
-Generation surprisal starts with the uniformly random word,
-insertion-position, and inserted-character choices, then adjusts
-for distinct generation paths that produce the same password. Path counting is
-exact and uses arbitrary-precision path counts. Generation fails rather than
+Raw entropy is the password length multiplied by the base-2 logarithm of the
+effective character alphabet. It represents a naive character-by-character
+search space and is useful when the generation parameters and filtered word
+list remain secret. It is not the entropy of the configured generation process,
+because an attacker may infer or discover those parameters.
+
+Generation entropy measures the uniformly random word, insertion-position, and
+inserted-character choices. Generation surprisal further adjusts that value for
+distinct generation paths that produce the same password. Path counting is
+exact and uses arbitrary-precision integers. Generation fails rather than
 returning a password with an unknown security estimate if path counting exceeds
 `--calculation-timeout`.
 
@@ -104,10 +111,11 @@ numbers when standard output is a terminal. Redirected output and
 `--passwords-only` remain plain text. Set the standard `NO_COLOR` environment
 variable to disable styling.
 
-The calculation assumes an attacker knows the generator configuration and the
-exact filtered word list. A larger list increases the candidate space even
-when it is public. Keeping a list secret may change an attacker's strategy, but
-that uncertain secrecy is deliberately not counted as entropy.
+Generation entropy and collision-adjusted surprisal assume an attacker knows
+the generator configuration and exact filtered word list. Raw entropy presents
+the alternate character-search estimate for the intended secret-parameter
+threat model. The enforced minimum uses collision-adjusted surprisal rather than
+relying on configuration secrecy.
 
 The default policy rejects results below 64 bits of collision-adjusted
 surprisal. Increase `--word-count` for higher-value or offline-verifier threat

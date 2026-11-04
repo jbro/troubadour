@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"math/big"
 	"regexp"
@@ -250,9 +251,10 @@ type wordNode struct {
 
 // Generator validates and preprocesses an immutable dictionary for repeated use.
 type Generator struct {
-	config Config
-	words  []preparedWord
-	root   *wordNode
+	config       Config
+	words        []preparedWord
+	root         *wordNode
+	alphabetSize int
 }
 
 type dictionaryBuilder struct {
@@ -262,6 +264,7 @@ type dictionaryBuilder struct {
 	minimumWordLength int
 	totalRunes        int
 	trieNodes         int
+	alphabet          map[rune]struct{}
 }
 
 // NewGenerator validates and copies words, then prepares reusable lookup data.
@@ -288,6 +291,7 @@ func NewGenerator(ctx context.Context, words []string, config Config) (*Generato
 		root:              &wordNode{},
 		minimumWordLength: math.MaxInt,
 		trieNodes:         1,
+		alphabet:          make(map[rune]struct{}),
 	}
 	for _, word := range words {
 		if err := ctx.Err(); err != nil {
@@ -309,9 +313,10 @@ func NewGenerator(ctx context.Context, words []string, config Config) (*Generato
 		return nil, fmt.Errorf("cannot insert %d characters into every possible selection; shortest selections have %d positions", needed, available)
 	}
 	return &Generator{
-		config: config,
-		words:  builder.prepared,
-		root:   builder.root,
+		config:       config,
+		words:        builder.prepared,
+		root:         builder.root,
+		alphabetSize: effectiveAlphabetSize(builder.alphabet, config),
 	}, nil
 }
 
@@ -333,6 +338,7 @@ func (b *dictionaryBuilder) add(word string) error {
 
 	node := b.root
 	for _, char := range runes {
+		b.alphabet[char] = struct{}{}
 		child := node.children[char]
 		if child == nil {
 			if b.trieNodes == maxTrieNodes {
@@ -354,12 +360,31 @@ func (b *dictionaryBuilder) add(word string) error {
 	return nil
 }
 
+func effectiveAlphabetSize(wordAlphabet map[rune]struct{}, config Config) int {
+	alphabet := maps.Clone(wordAlphabet)
+	if config.DigitCount > 0 {
+		for _, char := range Digits {
+			alphabet[char] = struct{}{}
+		}
+	}
+	if config.SpecialCount > 0 {
+		for _, char := range SpecialCharacters {
+			alphabet[char] = struct{}{}
+		}
+	}
+	return len(alphabet)
+}
+
 // Result describes one generated password and its security estimates.
 type Result struct {
 	// Words contains the selected words before insertions.
 	Words []string
 	// Password is the final generated value.
 	Password string
+	// RawEntropy is log2 of the character-by-character search space for a
+	// password of this length over the generator's effective alphabet. It is
+	// not the entropy of the configured generation process.
+	RawEntropy float64
 	// Entropy is the base-2 logarithm of the unadjusted generation choices.
 	Entropy float64
 	// PathCount is the exact number of generation paths producing Password.
@@ -398,9 +423,10 @@ func (g *Generator) generate(ctx context.Context, random io.Reader) (Result, err
 	entropy := float64(g.config.WordCount)*math.Log2(float64(len(g.words))) + Log2Combination(positionCount, g.config.DigitCount) + Log2Combination(positionCount-g.config.DigitCount, g.config.SpecialCount)
 	entropy += float64(g.config.DigitCount)*math.Log2(float64(len(Digits))) + float64(g.config.SpecialCount)*math.Log2(float64(len(SpecialCharacters)))
 	result := Result{
-		Words:    selectedWords,
-		Password: value,
-		Entropy:  entropy,
+		Words:      selectedWords,
+		Password:   value,
+		RawEntropy: float64(utf8.RuneCountInString(value)) * math.Log2(float64(g.alphabetSize)),
+		Entropy:    entropy,
 	}
 
 	calculationContext, cancel := context.WithTimeout(ctx, g.config.CalculationTimeout)

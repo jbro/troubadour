@@ -45,6 +45,7 @@ func TestDictionaryBuilderEnforcesTrieLimit(t *testing.T) {
 		root:              &wordNode{},
 		minimumWordLength: maxWordLength,
 		trieNodes:         maxTrieNodes,
+		alphabet:          make(map[rune]struct{}),
 	}
 	if err := builder.add("cat"); err == nil || !strings.Contains(err.Error(), "trie must not exceed") {
 		t.Fatalf("error = %v, want trie-node limit error", err)

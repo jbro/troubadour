@@ -118,7 +118,7 @@ The word list must contain one safe, whitespace-free, NFC-normalized UTF-8 candi
 Candidates are deduplicated after filtering and resource limits are enforced.
 Lengths count Unicode code points, not user-perceived grapheme clusters.
 Requested digits and punctuation are inserted inside words, never at word boundaries.
-Entropy assumes an attacker knows the configured generator and filtered word list.
+Raw entropy shows the character search space; generation estimates assume known parameters.
 Password generation fails if the exact collision-adjusted estimate cannot be calculated.
 Set --minimum-surprisal=0 only to explicitly permit weak output.
 
@@ -473,18 +473,19 @@ func printResult(output io.Writer, result troubadour.Result, color bool) error {
 	if err := writeDetail(output, "Length:", length, "", color); err != nil {
 		return fmt.Errorf("write length: %w", err)
 	}
+	rawEntropy := styled(color, ansiBold, fmt.Sprintf("%.2f", result.RawEntropy)) + " bits (character-by-character search space)"
+	if err := writeDetail(output, "Raw entropy:", rawEntropy, "", color); err != nil {
+		return fmt.Errorf("write raw entropy: %w", err)
+	}
 	label := "paths"
 	if result.PathCount.IsInt64() && result.PathCount.Int64() == 1 {
 		label = "path"
 	}
-	surprisal := styled(color, ansiBold, fmt.Sprintf("%.2f", result.Surprisal)) + " bits (" +
-		styled(color, ansiBold, result.PathCount.String()) + " valid " + label + ")"
-	if err := writeDetail(output, "Generation surprisal:", surprisal, "", color); err != nil {
-		return fmt.Errorf("write generation surprisal: %w", err)
-	}
-	entropy := styled(color, ansiBold, fmt.Sprintf("%.2f", result.Entropy)) + " bits"
-	if err := writeDetail(output, "Unadjusted choices:", entropy, "", color); err != nil {
-		return fmt.Errorf("write unadjusted choices: %w", err)
+	entropy := "collision-adjusted " + styled(color, ansiBold, fmt.Sprintf("%.2f", result.Surprisal)) + " bits (" +
+		styled(color, ansiBold, result.PathCount.String()) + " valid " + label + ") | unadjusted choices " +
+		styled(color, ansiBold, fmt.Sprintf("%.2f", result.Entropy)) + " bits"
+	if err := writeDetail(output, "Entropy:", entropy, "", color); err != nil {
+		return fmt.Errorf("write entropy: %w", err)
 	}
 	return nil
 }
