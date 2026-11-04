@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Verify module metadata
+        run: go mod tidy -diff
+
+      - name: Test
+        run: go test -race -shuffle=on ./...
+
+      - name: Fuzz security-sensitive parsers
+        if: github.event_name == 'schedule'
+        run: |
+          go test -run=^$ -fuzz=FuzzLoadWords -fuzztime=30s .
+          go test -run=^$ -fuzz=FuzzCountGenerationPaths -fuzztime=30s .
+
+      - name: Check formatting
+        run: |
+          go tool gofumpt -w .
+          git diff --exit-code
+
+      - name: Lint
+        run: go tool golangci-lint run ./...
+
+      - name: Check vulnerabilities
+        run: go tool govulncheck ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Cross-build
+        run: |
+          GOOS=darwin GOARCH=amd64 go build ./...
+          GOOS=windows GOARCH=amd64 go build ./...

@@ -1,0 +1,125 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  default: none
+  enable:
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - contextcheck
+    - cyclop
+    - depguard
+    - dupl
+    - durationcheck
+    - errcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - fatcontext
+    - forcetypeassert
+    - gocheckcompilerdirectives
+    - gochecknoglobals
+    - gochecknoinits
+    - gochecksumtype
+    - gocognit
+    - gocritic
+    - godoclint
+    - gomoddirectives
+    - goprintffuncname
+    - gosec
+    - govet
+    - iface
+    - ineffassign
+    - intrange
+    - maintidx
+    - makezero
+    - misspell
+    - mirror
+    - modernize
+    - musttag
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - nilnesserr
+    - nolintlint
+    - paralleltest
+    - perfsprint
+    - predeclared
+    - reassign
+    - recvcheck
+    - revive
+    - staticcheck
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - unused
+    - usetesting
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+  settings:
+    cyclop:
+      max-complexity: 18
+    depguard:
+      rules:
+        secure-randomness:
+          deny:
+            - pkg: math/rand$
+              desc: use crypto/rand for password generation
+            - pkg: math/rand/v2$
+              desc: use crypto/rand for password generation
+    errcheck:
+      check-blank: true
+      check-type-assertions: true
+      disable-default-exclusions: true
+    gocognit:
+      min-complexity: 25
+    gocritic:
+      enabled-checks:
+        - badLock
+        - badRegexp
+        - deferInLoop
+        - evalOrder
+        - nilValReturn
+        - truncateCmp
+        - uncheckedInlineErr
+    gomoddirectives:
+      check-module-path: true
+      exclude-forbidden: true
+      go-version-pattern: '^1\.27\.0$'
+      ignore-forbidden: true
+      toolchain-pattern: '^go1\.27\.\d+$'
+    gosec:
+      config:
+        global:
+          nosec: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    misspell:
+      locale: US
+    nilnil:
+      detect-opposite: true
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+  exclusions:
+    generated: disable
+
+formatters:
+  enable:
+    - gofumpt
+  exclusions:
+    generated: strict
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -1,28 +1,131 @@
 # troubadour
-A small script for generating memorable word-based passwords using cryptographically secure randomness.
 
-    ./troubadour.rb -h
-    Usage: ./troubadour.rb [options]
-        -m, --min_length=N               Minimum length of word to select
-        -M, --max_length=N               Maximum length of a word to select
-        -n, --words=N                    Number of words to select
-        -c, --count=N                    Number of passwords to generate
-        -d, --digits=N                   Number of digits to insert
-        -s, --special_chars=N            Number of special characters to insert
-        -t, --timeout=SECONDS             Collision calculation timeout per password
-        -l, --word_list=FILE             Word list to select words from
-        -E, --exclude=REGEXP             Regular expression for excluding words
-        -h, --help                       Prints this help
+`troubadour` is a Go CLI for generating memorable word-based passwords with
+cryptographically secure randomness.
 
-`-d` inserts exactly the requested number of digits. `-s` inserts exactly the
-requested number of ASCII punctuation characters; digits and spaces are not
-part of this special-character set. The entropy value estimates the choices
-made by the generator and assumes the word selections produce distinct
-passwords.
+```sh
+go run ./cmd/troubadour --word-list /path/to/words.txt
+```
 
-The naive search-space value assumes an attacker tests every possible string
-character by character. It is not the password's generation entropy.
-Collision-adjusted surprisal counts every valid generation path for the
-password, including ambiguous word boundaries and inserted characters that
-could belong to a word. This exact calculation has a five-second deadline per
-password by default, configurable with `--timeout`.
+The word-list file is required and must contain one NFC-normalized UTF-8
+candidate per line.
+Blank, excluded, oversized, and out-of-range entries are removed, and duplicate
+entries are collapsed before generation. Candidates containing control or
+Unicode format code points or whitespace are rejected because they could
+manipulate or create ambiguous terminal output.
+
+## Options
+
+```text
+--config PATH                    configuration file (default user config directory)
+--word-list PATH                 required word-list file
+--min-word-length N              minimum candidate length in code points (default 3)
+--max-word-length N              maximum candidate length in code points (default 8)
+--word-count N                   words per password (default 6)
+--password-count N               passwords to generate (default 1)
+--digit-count N                  inserted ASCII digits (default 0)
+--special-count N                inserted ASCII punctuation characters (default 1)
+--minimum-surprisal BITS         reject weaker generated passwords (default 64)
+--calculation-timeout DURATION   path-counting limit per password (default 5s)
+--exclude-regexp REGEXP          Go regexp matching candidates to omit (default ^$)
+--passwords-only                 print only generated passwords
+```
+
+Durations use Go syntax such as `750ms`, `5s`, or `1m`. Set
+`--minimum-surprisal=0` only when deliberately accepting weak output. Lengths
+count Unicode code points, not user-perceived grapheme clusters, so an insertion
+may separate a base character from a combining mark. Run
+`go run ./cmd/troubadour --help` for the authoritative help output.
+
+## Configuration file
+
+An optional `troubadour/config.toml` under the platform user configuration
+directory returned by Go's `os.UserConfigDir` can set the default for every
+generation and output flag. Current-directory configuration is never loaded
+implicitly. Use `--config PATH` to load another file; command-line flags always
+override file values. A missing default file is ignored, while a missing
+explicitly requested file is an error. Unknown keys and invalid values are
+rejected.
+
+```toml
+word-list = "~/.local/share/troubadour/words.txt"
+min-word-length = 3
+max-word-length = 8
+word-count = 6
+password-count = 1
+digit-count = 0
+special-count = 1
+minimum-surprisal = 64
+calculation-timeout = "5s"
+exclude-regexp = "^$"
+passwords-only = false
+```
+
+Relative paths are interpreted from the current working directory. Both config
+and word-list paths expand `~` to the current user's home directory;
+`~another-user` syntax is not supported. Configuration files are limited to
+64 KiB.
+
+Insertions are placed inside words, never before the first or after the last
+code point. A configuration is rejected unless every possible word selection
+has enough insertion positions; generation therefore cannot randomly fail
+because it selected shorter words.
+
+## Security estimates
+
+By default, output includes the selected source words, final password, password
+length, generation surprisal, and unadjusted choice count. Pass
+`--passwords-only` when piping output to another program to print one generated
+password per line:
+
+```text
+cor!recthor7sebatterystaple
+```
+
+Generation surprisal starts with the uniformly random word,
+insertion-position, and inserted-character choices, then adjusts
+for distinct generation paths that produce the same password. Path counting is
+exact and uses arbitrary-precision path counts. Generation fails rather than
+returning a password with an unknown security estimate if path counting exceeds
+`--calculation-timeout`.
+
+Detailed output highlights the source words in bold yellow and bolds metric
+numbers when standard output is a terminal. Redirected output and
+`--passwords-only` remain plain text. Set the standard `NO_COLOR` environment
+variable to disable styling.
+
+The calculation assumes an attacker knows the generator configuration and the
+exact filtered word list. A larger list increases the candidate space even
+when it is public. Keeping a list secret may change an attacker's strategy, but
+that uncertain secrecy is deliberately not counted as entropy.
+
+The default policy rejects results below 64 bits of collision-adjusted
+surprisal. Increase `--word-count` for higher-value or offline-verifier threat
+models. A deliberately lower target must be requested explicitly.
+
+Some destination systems normalize Unicode, trim values, or interpret shell
+punctuation. Candidates are required to be NFC-normalized and whitespace-free,
+but callers must still preserve the generated password exactly and quote it
+when passing it through a shell.
+
+Word lists are limited to 250,000 unique candidates, 4,000,000 total Unicode
+code points, and 1,000,000 trie nodes. Public path-counting input is limited to
+the maximum possible generated password length.
+
+## Development
+
+Runtime dependencies are the TOML parser, terminal detection, and Unicode
+normalization packages. Development tools are pinned in the root `go.mod` with
+Go's `tool` directive.
+
+```sh
+go test -race -shuffle=on ./...
+go tool gofumpt -w .
+go tool golangci-lint run ./...
+go tool govulncheck ./...
+go build ./...
+```
+
+The same verification checks run in GitHub Actions. Weekly scheduled runs also
+exercise the fuzz targets, and Dependabot tracks Go and GitHub Actions updates.
+`gofumpt` is also enforced by golangci-lint.
