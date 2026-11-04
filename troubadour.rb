@@ -59,6 +59,7 @@ parser = OptionParser.new do |opts|
   end
 
   opts.on('-l', '--word_list=FILE', 'Word list to select words from') do |path|
+    path = File.expand_path(path)
     raise OptionParser::InvalidArgument, 'file does not exist' unless File.file?(path)
     config[:word_list] = path
   end
